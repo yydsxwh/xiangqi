@@ -18,7 +18,11 @@ button {
 }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.app-shell { min-height: 100dvh; }
+.app-shell {
+  min-height: 100dvh;
+  background: var(--xq-page, #f6f3ee);
+  color: var(--xq-ink, #1c1915);
+}
 .topbar {
   display: flex;
   flex-wrap: wrap;
@@ -31,13 +35,14 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .topbar a { color: #6b4f2a; text-decoration: none; }
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
   gap: 20px;
   padding: 16px;
   align-items: start;
 }
-.stage { position: relative; min-width: 0; }
-#board-slot { width: min(100%, 640px); margin: 8px auto; }
+.stage { position: relative; min-width: 0; z-index: 1; }
+.side, .topbar { position: relative; z-index: 2; }
+#board-slot { width: min(100%, 880px); margin: 8px auto; }
 .confirm-bar {
   display: flex;
   flex-wrap: wrap;
@@ -59,8 +64,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .player.active strong { color: #9d2c2c; }
 .player em { margin-left: auto; font-style: normal; letter-spacing: 0.12em; }
 .side {
-  background: white;
-  border: 1px solid #e6e0d6;
+  background: var(--xq-card, white);
+  color: var(--xq-ink, #1c1915);
+  border: 1px solid var(--xq-line, #e6e0d6);
   border-radius: 16px;
   padding: 16px;
 }
@@ -74,26 +80,24 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .overlay {
   position: absolute;
   inset: 20% 12%;
+  z-index: 6;
   display: grid;
   place-items: center;
-  background: rgba(255, 252, 247, 0.92);
+  background: color-mix(in srgb, var(--xq-card, #fff) 92%, transparent);
+  color: var(--xq-ink, #1c1915);
   border-radius: 16px;
   font-size: 28px;
 }
-.setup {
-  position: fixed;
-  inset: 0;
-  margin: auto;
-  width: min(420px, calc(100% - 32px));
-  height: fit-content;
-  background: white;
-  border-radius: 16px;
-  padding: 20px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.16);
-  display: grid;
-  gap: 12px;
+.setup-form { display: grid; gap: 12px; }
+.setup-form label { display: grid; gap: 6px; }
+.setup-form select, .setup-form input, .theme-select {
+  min-height: 44px;
+  border: 1px solid var(--xq-line, #d9d2c8);
+  border-radius: 10px;
+  background: var(--xq-card, white);
+  color: inherit;
+  padding: 0 10px;
 }
-.setup label { display: grid; gap: 6px; }
 .drawer-toggle { display: none; }
 .observe .side { display: none; }
 .observe #board-slot { width: min(100%, calc(100vw - 24px), 96dvh); }
