@@ -168,6 +168,20 @@ sudo rm -rf /var/www/xiangqi-web
 - 服务器磁盘大约 96%。这次构建放下了，下次发布前要先清空间。
 - 官方部署脚本如果直接 `git pull` 生产分支，会带上服务器目前还没有的另外 5 个提交，并和本地「辅导」提交相遇。这次没有那样做。
 
+## 站长后台与主题
+
+后台入口：https://www.yydsxwh.com/studio/games/xiangqi ，仅站长可进。
+
+配置存在主站 `SiteSettings.xiangqiJson`。公开接口 `GET /api/games/xiangqi/config` 只返回开关、默认主题、功能开关、AI 是否可用和模型展示名。
+
+密钥规则：后台只显示掩码；掩码再次保存不改原密钥；不进 Git、HTML 和前端包。测试连接由服务端执行，只返回成败、模型名、延迟和短错误。
+
+AI 读取顺序：象棋独立配置，其次全局翻译接口配置，最后是环境变量 `OPENAI_API_KEY`、`OPENAI_XIANGQI_MODEL`、`OPENAI_XIANGQI_FALLBACK_MODEL`、`OPENAI_XIANGQI_BASE_URL`。
+
+八套主题：紫檀鎏金、黑曜夜局、白玉宫廷、青玉雅集、胡桃木经典、水墨、现代极简、翡翠鎏金。站长可在对局里切换，选择记在本机，不改棋局。默认主题由后台保存。
+
+开局不再用盖住棋盘的小弹窗。桌面左侧是大棋盘，右侧是设置。1280 宽时棋盘约 880px。390 和 412 宽没有横向溢出。
+
 ## 16. 下一阶段
 
 1. 在服务器写入 `OPENAI_API_KEY` 后，用站长账号打一局 OpenAI vs 手动对手，确认非法着法不会落下。
