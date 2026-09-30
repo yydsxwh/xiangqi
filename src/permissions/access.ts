@@ -1,7 +1,13 @@
-export const ROLES = ['SUPER_ADMIN', 'USER', 'ANONYMOUS'] as const;
-export type Role = (typeof ROLES)[number];
-
-/** 站长可以使用 OpenAI。普通用户和未登录用户不可以。 */
-export function canUseOpenAI(role: Role): boolean {
-  return role === 'SUPER_ADMIN';
+/**
+ * 象棋前端只消费主站下发的能力，不保存谁是站长。
+ * 站长身份由主站 getSession() / isAdmin() 决定。
+ */
+export interface GameCapabilities {
+  canEnterBeta: boolean;
+  canUseOpenAI: boolean;
 }
+
+export const NO_ACCESS: GameCapabilities = {
+  canEnterBeta: false,
+  canUseOpenAI: false,
+};

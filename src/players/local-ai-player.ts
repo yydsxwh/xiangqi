@@ -7,7 +7,7 @@ export const LOCAL_DIFFICULTIES = ['beginner', 'intermediate', 'master'] as cons
 export type LocalDifficulty = (typeof LOCAL_DIFFICULTIES)[number];
 
 export interface LocalSearchEngine {
-  findMove(input: { fen: string; turn: Side; difficulty: LocalDifficulty }): Promise<PlayerMove | null>;
+  findMove(input: { fen: string; sideToMove: Side; difficulty: LocalDifficulty }): Promise<PlayerMove | null>;
 }
 
 /** 本地搜索的棋手。引擎从外面注入，便于以后换成 Worker，也便于测试。 */
@@ -23,7 +23,7 @@ export class LocalAIPlayer implements Player {
   requestMove(request: MoveRequest): Promise<PlayerMove | null> {
     return this.engine.findMove({
       fen: request.fen,
-      turn: request.turn,
+      sideToMove: request.sideToMove,
       difficulty: this.difficulty,
     });
   }

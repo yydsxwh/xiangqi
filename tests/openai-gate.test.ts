@@ -1,48 +1,51 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { canUseOpenAI } from '../src/permissions/access.ts';
-import { handleOpenAIMoveRequest, OPENAI_MOVE_ROUTE } from '../src/server/openai-move.ts';
+import { createInitialPosition, fenOf, legalUcciMoves } from '../src/domain/position.ts';
+import { createTurnLock, turnKey } from '../src/openai/lock.ts';
+import { acceptModelMove, parseOpenAIMoveBody } from '../src/openai/validate.ts';
+import { OPENAI_MOVE_ROUTE } from '../src/server/openai-move.ts';
 
-describe('OpenAI 服务端闸门', () => {
-  it('路由固定在我们自己的服务端', () => {
-    expect(OPENAI_MOVE_ROUTE).toBe('/api/matches/:matchId/ai/openai');
+describe('OpenAI 请求校验', () => {
+  const position = createInitialPosition();
+  const legalMoves = legalUcciMoves(position);
+
+  it('只请求主站同域路径', () => {
+    expect(OPENAI_MOVE_ROUTE).toBe('/api/games/xiangqi/openai-move');
   });
 
-  it('未登录与匿名用户返回 401', () => {
-    expect(handleOpenAIMoveRequest(null)).toMatchObject({ ok: false, status: 401 });
-    expect(handleOpenAIMoveRequest({ userId: 'guest', role: 'ANONYMOUS' })).toMatchObject({
-      ok: false,
-      status: 401,
+  it('拒绝坏掉的 FEN，并要求行棋方一致', () => {
+    expect(parseOpenAIMoveBody({ fen: 'nope', sideToMove: 'red', legalMoves, turnId: 't', matchId: 'm' }).ok).toBe(false);
+    const flipped = parseOpenAIMoveBody({
+      fen: fenOf(position).replace(' w ', ' b '),
+      sideToMove: 'red',
+      legalMoves,
+      turnId: 't',
+      matchId: 'm',
     });
+    expect(flipped.ok).toBe(false);
   });
 
-  it('普通用户返回 403', () => {
-    expect(canUseOpenAI('USER')).toBe(false);
-    expect(handleOpenAIMoveRequest({ userId: 'u1', role: 'USER' })).toMatchObject({
-      ok: false,
-      status: 403,
-    });
+  it('模型着法必须在合法列表中', () => {
+    expect(acceptModelMove(legalMoves[0] ?? '', legalMoves)).toBe(true);
+    expect(acceptModelMove('a0i9', legalMoves)).toBe(false);
+    expect(acceptModelMove('炮飞出界', legalMoves)).toBe(false);
   });
 
-  it('站长通过角色检查，但本轮仍不调用模型', () => {
-    expect(canUseOpenAI('SUPER_ADMIN')).toBe(true);
-    expect(handleOpenAIMoveRequest({ userId: 'owner', role: 'SUPER_ADMIN' })).toEqual({
-      ok: false,
-      status: 501,
-      reason: 'OpenAI 接入尚未启用',
-    });
+  it('同一局面不能同时开始两次请求', () => {
+    const lock = createTurnLock();
+    const key = turnKey('m', fenOf(position));
+    expect(lock.tryBegin(key, 'a')).toBe(true);
+    expect(lock.tryBegin(key, 'b')).toBe(false);
+    lock.finish(key, 'a');
+    expect(lock.tryBegin(key, 'b')).toBe(true);
   });
 
-  it('棋手与棋盘源码不包含 OpenAI 的地址或密钥入口', () => {
-    const openaiPlayer = readFileSync(new URL('../src/players/openai-player.ts', import.meta.url), 'utf8');
-    const board = readFileSync(new URL('../src/ui/board-view.ts', import.meta.url), 'utf8');
-    const pikafish = readFileSync(new URL('../src/players/pikafish-player.ts', import.meta.url), 'utf8');
-
-    expect(openaiPlayer).not.toMatch(/api\.openai\.com/);
-    expect(openaiPlayer).not.toMatch(/sk-/);
-    expect(board).not.toMatch(/openai/i);
-    expect(board).not.toMatch(/pikafish/i);
-    expect(pikafish).not.toMatch(/\.wasm/);
-    expect(pikafish).not.toMatch(/xiangqiai\.com/);
+  it('棋盘和棋手源码不包含密钥或直连地址', () => {
+    const board = readFileSync(new URL('../src/ui/XiangqiBoard.tsx', import.meta.url), 'utf8');
+    const app = readFileSync(new URL('../src/ui/MatchApp.tsx', import.meta.url), 'utf8');
+    const player = readFileSync(new URL('../src/players/openai-player.ts', import.meta.url), 'utf8');
+    expect(board + app + player).not.toMatch(/sk-/);
+    expect(board + app + player).not.toMatch(/OPENAI_API_KEY/);
+    expect(player).not.toMatch(/api\.openai\.com/);
   });
 });

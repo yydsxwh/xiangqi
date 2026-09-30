@@ -1,9 +1,9 @@
 # 第三方声明
 
-本仓库这一版没有拷贝任何外部项目的源码、资源或引擎二进制。
+本产品的规则、FEN、中文记谱、重复局面和本地搜索来自 hkm-a/xiangqi 的 MIT 代码，详见 `THIRD_PARTY_NOTICES.md`。
 
-`.reference/` 只存在于本地工作区，已写入 `.gitignore`，不是本产品的一部分。
+界面、棋手接口和对局流程是 yydsxwh/xiangqi 自己的实现。
 
-后续如果移植 MIT 代码，必须在对应文件保留上游版权与许可声明，并更新本文件。GPL-3.0 的 xiangqiground 与 Pikafish 不在移植范围内，除非另行做出兼容 GPL 的许可证决定。
+`.reference/` 只在本地阅读，不进入 Git。
 
-审计结论见 `docs/opensource-research.md`。
+GPL-3.0 的 xiangqiground 与 Pikafish 不在本产品中。

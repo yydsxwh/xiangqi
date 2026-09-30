@@ -1,17 +1,29 @@
 {
   "name": "xiangqi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "yydsxwh 中国象棋。规则与棋手分离，OpenAI 只预留服务端鉴权入口。",
+  "description": "yydsxwh 中国象棋网页内测。规则与棋手分离，OpenAI 只走主站。",
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.13",
     "@types/node": "^22.20.4",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.0.4",
+    "tailwindcss": "^4.1.13",
     "typescript": "^5.9.3",
+    "vite": "^6.3.6",
     "vitest": "^3.2.4"
   }
 }

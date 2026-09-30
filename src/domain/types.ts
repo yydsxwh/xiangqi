@@ -10,6 +10,15 @@ export interface Square {
 /** 棋手之间交换的一步。UCCI 四字符，例如 `h2e2`。 */
 export interface PlayerMove {
   ucci: string;
+  reason?: string;
+  model?: string;
+  requestId?: string;
+  thinkingMs?: number;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    reasoningTokens?: number;
+  };
 }
 
 export const START_FEN =

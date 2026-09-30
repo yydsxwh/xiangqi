@@ -7,7 +7,14 @@ import type { Player } from './types.ts';
  * 这里没有模型 SDK，也没有密钥。transport 必须请求我们自己的服务端。
  */
 export interface OpenAIMoveTransport {
-  requestMove(input: { matchId: string; fen: string; turn: Side }): Promise<PlayerMove | null>;
+  requestMove(input: {
+    matchId: string;
+    fen: string;
+    sideToMove: Side;
+    legalMoves: readonly string[];
+    recentNotation: readonly string[];
+    turnId: string;
+  }): Promise<PlayerMove | null>;
 }
 
 export class OpenAIPlayer implements Player {
@@ -22,7 +29,10 @@ export class OpenAIPlayer implements Player {
     return this.transport.requestMove({
       matchId: request.matchId,
       fen: request.fen,
-      turn: request.turn,
+      sideToMove: request.sideToMove,
+      legalMoves: request.legalMoves,
+      recentNotation: request.recentNotation,
+      turnId: request.turnId,
     });
   }
 }
