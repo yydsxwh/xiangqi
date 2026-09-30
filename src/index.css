@@ -21,6 +21,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .app-shell { min-height: 100dvh; }
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   align-items: center;
   padding: 12px 16px;
@@ -86,8 +87,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .setup label { display: grid; gap: 6px; }
 .drawer-toggle { display: none; }
 .observe .side { display: none; }
-.observe #board-slot { width: min(100%, 96dvh); }
+.observe #board-slot { width: min(100%, calc(100vw - 24px), 96dvh); }
 .observe .topbar span { font-size: 20px; font-weight: 700; }
+.observe .topbar { position: sticky; top: 0; z-index: 4; }
 
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; padding-bottom: 24px; }

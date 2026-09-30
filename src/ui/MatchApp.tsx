@@ -207,6 +207,9 @@ export function MatchApp() {
         <a href="/games">游戏中心</a>
         <strong>中国象棋</strong>
         <span>{status}</span>
+        {observe ? (
+          <button type="button" onClick={() => setObserve(false)}>退出观察模式</button>
+        ) : null}
       </header>
       <div className="layout">
         <section className="stage">

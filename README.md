@@ -2,7 +2,7 @@
 
 yydsxwh 的中国象棋。人机对弈是起点，棋手、规则和棋盘分开，后面可以换成本地搜索、OpenAI、Pikafish 或其他引擎。
 
-网页内测版构建后由主站挂在 `/games/xiangqi/`。反馈报告在 [docs/feedback-report.md](docs/feedback-report.md)，技术审计在 [docs/opensource-research.md](docs/opensource-research.md)。
+网页内测版挂在主站 `/games/xiangqi/`。上线记录在 [docs/web-beta-feedback.md](docs/web-beta-feedback.md)，审计在 [docs/opensource-research.md](docs/opensource-research.md)。
 
 ## 本地参考代码
 
