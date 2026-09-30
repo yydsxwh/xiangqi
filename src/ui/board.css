@@ -45,21 +45,36 @@
   .piece-move { transition: none; }
 }
 
-.dest-dot, .last-mark {
+.dest-dot, .last-mark, .pending-from, .pending-to {
   position: absolute;
   border-radius: 999px;
   transform: translate(-50%, -50%);
-  pointer-events: none;
 }
+
+.last-mark, .pending-from, .pending-to { pointer-events: none; }
 
 .dest-dot {
-  background: rgba(47, 111, 237, 0.9);
-  box-shadow: 0 0 0 6px rgba(47, 111, 237, 0.16);
+  z-index: 2;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: #2f9e44;
+  box-shadow: 0 0 0 7px rgba(47, 158, 68, 0.22);
+  cursor: pointer;
 }
 
+.pending-from { background: rgba(214, 122, 22, 0.55); }
+.pending-to {
+  background: rgba(47, 158, 68, 0.28);
+  box-shadow: inset 0 0 0 4px #1f8a3b;
+}
+.board-piece.pending-piece { outline: 3px solid #1f8a3b; outline-offset: 2px; }
+.board-piece.capture-preview { opacity: 0.35; }
+
 .dest-capture {
-  background: transparent;
-  box-shadow: inset 0 0 0 3px rgba(157, 44, 44, 0.85);
+  background: #2f9e44;
+  box-shadow: 0 0 0 3px #fff, 0 0 0 7px #2f9e44;
 }
 
 .last-mark {

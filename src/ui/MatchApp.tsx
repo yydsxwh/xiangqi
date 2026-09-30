@@ -16,7 +16,7 @@ import { searchLocalMove } from '../players/local-search.ts';
 import { OpenAIPlayer } from '../players/openai-player.ts';
 import { OPENAI_MOVE_ROUTE } from '../server/openai-move.ts';
 import { acceptModelMove } from '../openai/validate.ts';
-import { XiangqiBoard } from './XiangqiBoard.tsx';
+import { XiangqiBoard, type PendingPreview } from './XiangqiBoard.tsx';
 
 interface Usage {
   calls: number;
@@ -44,6 +44,7 @@ export function MatchApp() {
   const [manualName, setManualName] = useState('豆包');
   const [match, setMatch] = useState<MatchSnapshot>(() => createMatch('human-vs-local', 'red', 'intermediate', '豆包'));
   const [selected, setSelected] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingPreview | null>(null);
   const [flipped, setFlipped] = useState(false);
   const [observe, setObserve] = useState(false);
   const [drawer, setDrawer] = useState(false);
@@ -70,7 +71,7 @@ export function MatchApp() {
 
   useEffect(() => {
     const seat = seatForTurn(match);
-    if (setupOpen || thinking) return;
+    if (setupOpen || thinking || pending) return;
     if (match.status === 'checkmate' || match.status === 'stalemate' || match.status === 'draw') return;
     if (seat.kind === 'human') return;
     const request = moveRequestFor(match);
@@ -96,9 +97,9 @@ export function MatchApp() {
     return () => {
       cancelled = true;
     };
-  }, [match, setupOpen, difficulty, attempt]);
+  }, [match, setupOpen, difficulty, attempt, pending]);
 
-  const destinations = selected ? destinationsFrom(match.position, ...squareParts(selected)) : [];
+  const destinations = selected && !pending ? destinationsFrom(match.position, ...squareParts(selected)) : [];
   const last = match.history.at(-1);
   const lastMove = hoverMove
     ? [hoverMove.slice(0, 2), hoverMove.slice(2, 4)] as [string, string]
@@ -146,18 +147,36 @@ export function MatchApp() {
       subStatus: played.end.subStatus,
     });
     setSelected(null);
+    setPending(null);
     setNotice(move.reason ? `${played.record.notation} · ${move.reason}` : statusLine(played.end.status, played.end.subStatus, played.position.sideToMove));
   }
 
   function onPick(square: string) {
-    if (thinking || seatForTurn(match).kind !== 'human') return;
+    if (pending || thinking || seatForTurn(match).kind !== 'human') return;
     if (selected && destinations.includes(square)) {
-      const played = playHuman(`${selected}${square}`);
-      if (played) return;
+      setPending({ from: selected, to: square });
+      setSelected(null);
+      const [row, col] = squareParts(square);
+      setNotice(match.position.board[row][col] ? '即将吃子，确认后才会落子' : '请确认落子');
+      return;
     }
     const [row, col] = squareParts(square);
     const piece = match.position.board[row][col];
     setSelected(piece && piece.color === sideToMove(match) ? square : null);
+  }
+
+  function confirmPending() {
+    if (!pending) return;
+    const ucci = `${pending.from}${pending.to}`;
+    setPending(null);
+    playHuman(ucci);
+  }
+
+  function cancelPending() {
+    if (!pending) return;
+    setSelected(pending.from);
+    setPending(null);
+    setNotice('已取消，棋局没有变化');
   }
 
   function playHuman(ucci: string) {
@@ -184,6 +203,7 @@ export function MatchApp() {
       subStatus: restored.end.subStatus,
     });
     setSelected(null);
+    setPending(null);
     setNotice('已悔棋');
   }
 
@@ -192,6 +212,7 @@ export function MatchApp() {
     setMatch(next);
     setUsage(EMPTY_USAGE);
     setSelected(null);
+    setPending(null);
     setFlipped(humanSide === 'black');
     setNotice('');
     setSetupOpen(false);
@@ -224,15 +245,21 @@ export function MatchApp() {
               width={width}
               flipped={flipped}
               selected={selected}
-              destinations={thinking ? [] : destinations}
+              destinations={thinking || pending ? [] : destinations}
+              pending={pending}
               lastMove={lastMove}
               inCheck={match.status === 'check' || match.status === 'checkmate'}
-              interactive={!thinking && !setupOpen && seatForTurn(match).kind === 'human' && match.status !== 'checkmate' && match.status !== 'draw' && match.status !== 'stalemate'}
+              interactive={!thinking && !pending && !setupOpen && seatForTurn(match).kind === 'human' && match.status !== 'checkmate' && match.status !== 'draw' && match.status !== 'stalemate'}
               reducedMotion={reducedMotion}
               onPick={onPick}
-              onDrop={(from, to) => playHuman(`${from}${to}`)}
             />
           </div>
+          {pending ? (
+            <div className="confirm-bar">
+              <button type="button" onClick={confirmPending}>确认落子</button>
+              <button type="button" onClick={cancelPending}>取消</button>
+            </div>
+          ) : null}
           <PlayerBar
             name={match.seats[flipped ? 'black' : 'red'].name}
             active={sideToMove(match) === (flipped ? 'black' : 'red')}
@@ -243,11 +270,11 @@ export function MatchApp() {
           )}
         </section>
         <aside className="side">
-          <p className="notice" role="status">{thinking ? (seatForTurn(match).kind === 'openai' ? 'OpenAI 思考中…' : '本地 AI 思考中…') : notice || '点击或拖动棋子'}</p>
+          <p className="notice" role="status">{thinking ? (seatForTurn(match).kind === 'openai' ? 'OpenAI 思考中…' : '本地 AI 思考中…') : notice || '点击棋子，再点击绿色落点'}</p>
           <div className="actions">
             <button type="button" onClick={undo} disabled={thinking || match.history.length === 0}>悔棋</button>
             <button type="button" onClick={() => setFlipped((value) => !value)}>翻转</button>
-            <button type="button" onClick={() => { setMatch(createMatch(mode, humanSide, difficulty, manualName)); setUsage(EMPTY_USAGE); setNotice('已重新开始'); }}>重新开始</button>
+            <button type="button" onClick={() => { setMatch(createMatch(mode, humanSide, difficulty, manualName)); setUsage(EMPTY_USAGE); setSelected(null); setPending(null); setNotice('已重新开始'); }}>重新开始</button>
             <button type="button" onClick={() => setSetupOpen(true)}>新对局</button>
             <button type="button" aria-pressed={observe} onClick={() => setObserve((value) => !value)}>
               {observe ? '退出观察模式' : '手机观察模式'}

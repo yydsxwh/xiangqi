@@ -38,6 +38,15 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .stage { position: relative; min-width: 0; }
 #board-slot { width: min(100%, 640px); margin: 8px auto; }
+.confirm-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  width: min(100%, 640px);
+  margin: 10px auto 0;
+}
+.confirm-bar button { min-width: 132px; min-height: 48px; }
 .player {
   display: flex;
   gap: 10px;

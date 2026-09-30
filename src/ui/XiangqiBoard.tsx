@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ucciToSquare } from '../domain/coordinates.ts';
-import { pieceLabel, type Piece, type Position } from '../domain/position.ts';
-import { metricsForWidth, nearestSquare, squareCenter, type BoardMetrics } from './geometry.ts';
+import { pieceLabel, type Position } from '../domain/position.ts';
+import { metricsForWidth, squareCenter, type BoardMetrics } from './geometry.ts';
 import './board.css';
+
+export interface PendingPreview {
+  from: string;
+  to: string;
+}
 
 interface Props {
   position: Position;
@@ -10,12 +15,12 @@ interface Props {
   flipped: boolean;
   selected: string | null;
   destinations: readonly string[];
+  pending: PendingPreview | null;
   lastMove: readonly [string, string] | null;
   inCheck: boolean;
   interactive: boolean;
   reducedMotion: boolean;
   onPick: (square: string) => void;
-  onDrop: (from: string, to: string) => void;
 }
 
 const RED_FILES = ['九', '八', '七', '六', '五', '四', '三', '二', '一'];
@@ -32,18 +37,14 @@ export function XiangqiBoard({
   flipped,
   selected,
   destinations,
+  pending,
   lastMove,
   inCheck,
   interactive,
   reducedMotion,
   onPick,
-  onDrop,
 }: Props) {
   const metrics = metricsForWidth(width);
-  const frameRef = useRef<HTMLDivElement>(null);
-  const suppressClick = useRef(false);
-  const drag = useRef<{ from: string; x: number; y: number; moved: boolean; piece: Piece } | null>(null);
-  const [ghost, setGhost] = useState<{ from: string; x: number; y: number; piece: Piece } | null>(null);
   const [arrived, setArrived] = useState(false);
   const lastKey = lastMove ? lastMove.join('') : '';
 
@@ -70,75 +71,28 @@ export function XiangqiBoard({
     return null;
   }, [inCheck, position]);
 
-  function pointerDown(event: React.PointerEvent, square: string, piece: Piece) {
-    if (!interactive || piece.color !== position.sideToMove) return;
-    frameRef.current?.setPointerCapture(event.pointerId);
-    const rect = (event.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
-    drag.current = {
-      from: square,
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-      moved: false,
-      piece,
-    };
-    setGhost(null);
-  }
-
-  function pointerMove(event: React.PointerEvent) {
-    if (!drag.current) return;
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    const start = squareCenter(ucciToSquare(drag.current.from), metrics, flipped);
-    if (Math.hypot(x - start.x, y - start.y) > 8) drag.current.moved = true;
-    if (drag.current.moved) {
-      setGhost({ from: drag.current.from, x, y, piece: drag.current.piece });
-    }
-  }
-
-  function pointerUp(event: React.PointerEvent) {
-    const current = drag.current;
-    drag.current = null;
-    setGhost(null);
-    if (!current) return;
-    if (!current.moved) return;
-    suppressClick.current = true;
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    const hit = nearestSquare(event.clientX - rect.left, event.clientY - rect.top, metrics, flipped);
-    if (!hit) return;
-    const target = squareKey(hit.row, hit.col);
-    const fromPoint = ucciToSquare(current.from);
-    const dest = squareKey(fromPoint.row, fromPoint.col) === current.from
-      ? target
-      : target;
-    if (destinations.includes(dest) || (selected === current.from && destinations.includes(dest))) {
-      onDrop(current.from, dest);
-    }
-  }
-
   const topLabels = flipped ? [...RED_FILES].reverse() : BLACK_FILES;
   const bottomLabels = flipped ? [...BLACK_FILES].reverse() : RED_FILES;
   const movingTo = lastMove?.[1];
 
   return (
     <div
-      ref={frameRef}
       className="board-frame"
       style={{ width: metrics.width, height: metrics.height }}
-      onPointerMove={pointerMove}
-      onPointerUp={pointerUp}
-      onPointerCancel={() => {
-        drag.current = null;
-        setGhost(null);
-      }}
     >
       <BoardLines metrics={metrics} />
       <FileLabels labels={topLabels} metrics={metrics} edge="top" />
       <FileLabels labels={bottomLabels} metrics={metrics} edge="bottom" />
       {lastMove?.map((square) => {
         const center = squareCenter(ucciToSquare(square), metrics, flipped);
-        return <span key={square} className="last-mark" style={markStyle(center, metrics.cell * 0.92)} />;
+        return <span key={`last-${square}`} className="last-mark" style={markStyle(center, metrics.cell * 0.92)} />;
       })}
+      {pending ? (
+        <>
+          <span className="pending-from" style={markStyle(squareCenter(ucciToSquare(pending.from), metrics, flipped), metrics.cell * 0.96)} />
+          <span className="pending-to" style={markStyle(squareCenter(ucciToSquare(pending.to), metrics, flipped), metrics.cell * 0.96)} />
+        </>
+      ) : null}
       {destinations.map((square) => {
         const point = ucciToSquare(square);
         const center = squareCenter(point, metrics, flipped);
@@ -150,7 +104,7 @@ export function XiangqiBoard({
             className={occupied ? 'dest-dot dest-capture' : 'dest-dot'}
             style={markStyle(center, occupied ? metrics.cell * 0.86 : metrics.cell * 0.22)}
             aria-label={`走到 ${square}`}
-            onClick={() => selected && onDrop(selected, square)}
+            onClick={() => onPick(square)}
           />
         );
       })}
@@ -163,41 +117,28 @@ export function XiangqiBoard({
       {position.board.flatMap((row, rowIndex) => row.map((piece, col) => {
         if (!piece) return null;
         const square = squareKey(rowIndex, col);
-        if (ghost?.from === square) return null;
-        if (!reducedMotion && movingTo === square && !arrived) return null;
-        const center = squareCenter({ row: rowIndex, col }, metrics, flipped);
-        const visual = !reducedMotion && lastMove?.[0] === square && movingTo && !arrived
+        const previewing = pending?.from === square;
+        const beingCaptured = pending?.to === square;
+        if (!reducedMotion && !pending && movingTo === square && !arrived) return null;
+        const shownSquare = previewing && pending ? pending.to : square;
+        const center = squareCenter(ucciToSquare(shownSquare), metrics, flipped);
+        const travel = !pending && !reducedMotion && lastMove?.[1] === square && !arrived
           ? squareCenter(ucciToSquare(lastMove[0]), metrics, flipped)
           : center;
-        const shown = !reducedMotion && lastMove?.[1] === square && !arrived
-          ? squareCenter(ucciToSquare(lastMove[0]), metrics, flipped)
-          : visual;
         return (
           <button
             key={square}
             type="button"
-            className={`board-piece ${piece.color} ${selected === square ? 'selected' : ''} ${reducedMotion ? '' : 'piece-move'}`}
-            style={pieceStyle(shown, metrics)}
-            disabled={!interactive}
+            className={`board-piece ${piece.color} ${selected === square ? 'selected' : ''} ${previewing ? 'pending-piece' : ''} ${beingCaptured ? 'capture-preview' : ''} ${reducedMotion || pending ? '' : 'piece-move'}`}
+            style={{ ...pieceStyle(travel, metrics), zIndex: previewing ? 4 : beingCaptured ? 1 : 3 }}
+            disabled={!interactive || Boolean(pending)}
             aria-label={`${piece.color === 'red' ? '红' : '黑'}${pieceLabel(piece)} ${square}`}
-            onPointerDown={(event) => pointerDown(event, square, piece)}
-            onClick={() => {
-              if (suppressClick.current) {
-                suppressClick.current = false;
-                return;
-              }
-              if (interactive) onPick(square);
-            }}
+            onClick={() => interactive && !pending && onPick(square)}
           >
             {pieceLabel(piece)}
           </button>
         );
       }))}
-      {ghost ? (
-        <span className={`board-piece ghost ${ghost.piece.color}`} style={pieceStyle({ x: ghost.x, y: ghost.y }, metrics)}>
-          {pieceLabel(ghost.piece)}
-        </span>
-      ) : null}
     </div>
   );
 }
