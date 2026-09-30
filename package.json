@@ -1,0 +1,16 @@
+{
+  "name": "xiangqi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "yydsxwh 中国象棋。规则与棋手分离，OpenAI 只预留服务端鉴权入口。",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

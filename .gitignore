@@ -1,0 +1,10 @@
+# 本地开源参考。只供 Cursor 阅读和审计，禁止提交进 yydsxwh/xiangqi。
+.reference/
+
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
