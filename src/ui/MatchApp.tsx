@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { THEME_IDS, THEME_LABEL, THEMES, isThemeId, themeStyle, type ThemeId } from './themes.ts';
 import { explainPlain } from '../domain/explain.ts';
 import {
   createInitialPosition,
@@ -53,14 +54,22 @@ export function MatchApp() {
   const [hoverMove, setHoverMove] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [usage, setUsage] = useState<Usage>(EMPTY_USAGE);
-  const [width, setWidth] = useState(520);
+  const [width, setWidth] = useState(760);
+  const [theme, setTheme] = useState<ThemeId>('walnut');
+  const [canChooseTheme, setCanChooseTheme] = useState(false);
+  const [confirmMoves, setConfirmMoves] = useState(true);
+  const [allowUndo, setAllowUndo] = useState(true);
+  const [showNotation, setShowNotation] = useState(true);
+  const [showPlain, setShowPlain] = useState(true);
+  const [allowObserve, setAllowObserve] = useState(true);
+  const [aiAvailable, setAiAvailable] = useState(false);
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     const node = document.getElementById('board-slot');
     if (!node) return;
     const apply = () => {
-      const next = Math.min(node.clientWidth, observe ? 920 : 640);
+      const next = Math.min(node.clientWidth, observe ? 960 : 900);
       setWidth(Math.max(260, next));
     };
     apply();
@@ -68,6 +77,27 @@ export function MatchApp() {
     observer.observe(node);
     return () => observer.disconnect();
   }, [observe, setupOpen]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem('xiangqi-theme');
+    if (stored && isThemeId(stored)) setTheme(stored);
+    void fetch('/api/games/xiangqi/config', { credentials: 'same-origin' })
+      .then((response) => response.ok ? response.json() : null)
+      .then((config) => {
+        if (!config) return;
+        if (!stored && isThemeId(config.defaultTheme)) setTheme(config.defaultTheme);
+        if (config.defaultMode) setMode(config.defaultMode);
+        if (config.defaultDifficulty) setDifficulty(config.defaultDifficulty);
+        setCanChooseTheme(Boolean(config.canChooseTheme));
+        setConfirmMoves(config.confirmMoves !== false);
+        setAllowUndo(config.allowUndo !== false);
+        setShowNotation(config.showNotation !== false);
+        setShowPlain(config.showPlainExplanation !== false);
+        setAllowObserve(config.observeMode !== false);
+        setAiAvailable(Boolean(config.aiAvailable));
+      })
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     const seat = seatForTurn(match);
@@ -154,6 +184,10 @@ export function MatchApp() {
   function onPick(square: string) {
     if (pending || thinking || seatForTurn(match).kind !== 'human') return;
     if (selected && destinations.includes(square)) {
+      if (!confirmMoves) {
+        playHuman(`${selected}${square}`);
+        return;
+      }
       setPending({ from: selected, to: square });
       setSelected(null);
       const [row, col] = squareParts(square);
@@ -218,12 +252,18 @@ export function MatchApp() {
     setSetupOpen(false);
   }
 
+  function chooseTheme(value: string) {
+    if (!isThemeId(value)) return;
+    setTheme(value);
+    localStorage.setItem('xiangqi-theme', value);
+  }
+
   const status = statusLine(match.status, match.subStatus, sideToMove(match));
   const capturedRed = match.history.filter((record) => record.side === 'black' && record.capturedPiece);
   const capturedBlack = match.history.filter((record) => record.side === 'red' && record.capturedPiece);
 
   return (
-    <div className={observe ? 'app-shell observe' : 'app-shell'}>
+    <div className={observe ? 'app-shell observe' : 'app-shell'} style={themeStyle(THEMES[theme]) as React.CSSProperties}>
       <header className="topbar">
         <a href="/games">游戏中心</a>
         <strong>中国象棋</strong>
@@ -234,11 +274,12 @@ export function MatchApp() {
       </header>
       <div className="layout">
         <section className="stage">
-          <PlayerBar
+          {setupOpen ? <p className="player">棋盘预览</p> : null}
+          {!setupOpen ? <PlayerBar
             name={match.seats[flipped ? 'red' : 'black'].name}
             active={sideToMove(match) === (flipped ? 'red' : 'black')}
             captured={flipped ? capturedRed : capturedBlack}
-          />
+          /> : null}
           <div id="board-slot">
             <XiangqiBoard
               position={match.position}
@@ -260,25 +301,77 @@ export function MatchApp() {
               <button type="button" onClick={cancelPending}>取消</button>
             </div>
           ) : null}
-          <PlayerBar
+          {!setupOpen ? <PlayerBar
             name={match.seats[flipped ? 'black' : 'red'].name}
             active={sideToMove(match) === (flipped ? 'black' : 'red')}
             captured={flipped ? capturedBlack : capturedRed}
-          />
+          /> : null}
           {(match.status === 'checkmate' || match.status === 'stalemate' || match.status === 'draw') && (
             <div className="overlay" role="status">{status}</div>
           )}
         </section>
         <aside className="side">
+          {setupOpen ? (
+            <form className="setup-form" onSubmit={(event) => { event.preventDefault(); start(); }}>
+              <h2>新对局</h2>
+              <label>方式
+                <select value={mode} onChange={(event) => setMode(event.target.value as MatchMode)}>
+                  <option value="human-vs-human">本地双人</option>
+                  <option value="human-vs-local">人类 vs 本地 AI</option>
+                  {aiAvailable || mode === 'openai-vs-human' ? <option value="openai-vs-human">OpenAI vs 手动对手</option> : null}
+                </select>
+              </label>
+              {mode !== 'human-vs-human' ? (
+                <label>我执
+                  <select value={humanSide} onChange={(event) => setHumanSide(event.target.value as Side)}>
+                    <option value="red">红方先走</option>
+                    <option value="black">黑方</option>
+                  </select>
+                </label>
+              ) : null}
+              {mode === 'human-vs-local' ? (
+                <label>难度
+                  <select value={difficulty} onChange={(event) => setDifficulty(event.target.value as LocalDifficulty)}>
+                    <option value="beginner">入门</option>
+                    <option value="intermediate">进阶</option>
+                    <option value="master">大师</option>
+                  </select>
+                </label>
+              ) : null}
+              {mode === 'openai-vs-human' ? (
+                <label>手动对手
+                  <input value={manualName} maxLength={16} onChange={(event) => setManualName(event.target.value)} />
+                </label>
+              ) : null}
+              {canChooseTheme ? (
+                <label>主题
+                  <select value={theme} onChange={(event) => chooseTheme(event.target.value)}>
+                    {THEME_IDS.map((id) => <option key={id} value={id}>{THEME_LABEL[id]}</option>)}
+                  </select>
+                </label>
+              ) : null}
+              <button type="submit">开始</button>
+            </form>
+          ) : null}
+          {!setupOpen ? <>
           <p className="notice" role="status">{thinking ? (seatForTurn(match).kind === 'openai' ? 'OpenAI 思考中…' : '本地 AI 思考中…') : notice || '点击棋子，再点击绿色落点'}</p>
           <div className="actions">
-            <button type="button" onClick={undo} disabled={thinking || match.history.length === 0}>悔棋</button>
+            {allowUndo ? <button type="button" onClick={undo} disabled={thinking || match.history.length === 0}>悔棋</button> : null}
             <button type="button" onClick={() => setFlipped((value) => !value)}>翻转</button>
             <button type="button" onClick={() => { setMatch(createMatch(mode, humanSide, difficulty, manualName)); setUsage(EMPTY_USAGE); setSelected(null); setPending(null); setNotice('已重新开始'); }}>重新开始</button>
             <button type="button" onClick={() => setSetupOpen(true)}>新对局</button>
-            <button type="button" aria-pressed={observe} onClick={() => setObserve((value) => !value)}>
-              {observe ? '退出观察模式' : '手机观察模式'}
-            </button>
+            {allowObserve ? (
+              <button type="button" aria-pressed={observe} onClick={() => setObserve((value) => !value)}>
+                {observe ? '退出观察模式' : '手机观察模式'}
+              </button>
+            ) : null}
+            {canChooseTheme ? (
+              <label className="theme-select-label">主题
+                <select className="theme-select" value={theme} onChange={(event) => chooseTheme(event.target.value)}>
+                  {THEME_IDS.map((id) => <option key={id} value={id}>{THEME_LABEL[id]}</option>)}
+                </select>
+              </label>
+            ) : null}
             <button type="button" className="drawer-toggle" onClick={() => setDrawer((value) => !value)}>棋谱</button>
           </div>
           {notice && !thinking ? (
@@ -288,7 +381,7 @@ export function MatchApp() {
               <button type="button" disabled={thinking || seatForTurn(match).kind === 'human'} onClick={() => setAttempt((value) => value + 1)}>重新思考</button>
             </div>
           ) : null}
-          <section className={drawer ? 'history open' : 'history'}>
+          <section className={drawer ? 'history open' : 'history'} hidden={!showNotation}>
             <h2>棋谱</h2>
             <ol>
               {match.history.map((record) => (
@@ -301,7 +394,7 @@ export function MatchApp() {
                   tabIndex={0}
                 >
                   <span>{record.ply}. {record.notation}</span>
-                  <small>{explainPlain(record.notation, record.side)}</small>
+                  {showPlain ? <small>{explainPlain(record.notation, record.side)}</small> : null}
                 </li>
               ))}
             </ol>
@@ -316,43 +409,9 @@ export function MatchApp() {
             ) : null}
             <button type="button" className="drawer-toggle" onClick={() => setDrawer(false)}>关闭棋谱</button>
           </section>
+          </> : null}
         </aside>
       </div>
-      {setupOpen ? (
-        <form className="setup" onSubmit={(event) => { event.preventDefault(); start(); }}>
-          <h2>新对局</h2>
-          <label>方式
-            <select value={mode} onChange={(event) => setMode(event.target.value as MatchMode)}>
-              <option value="human-vs-human">本地双人</option>
-              <option value="human-vs-local">人类 vs 本地 AI</option>
-              <option value="openai-vs-human">OpenAI vs 手动对手</option>
-            </select>
-          </label>
-          {mode !== 'human-vs-human' ? (
-            <label>我执
-              <select value={humanSide} onChange={(event) => setHumanSide(event.target.value as Side)}>
-                <option value="red">红方先走</option>
-                <option value="black">黑方</option>
-              </select>
-            </label>
-          ) : null}
-          {mode === 'human-vs-local' ? (
-            <label>难度
-              <select value={difficulty} onChange={(event) => setDifficulty(event.target.value as LocalDifficulty)}>
-                <option value="beginner">入门</option>
-                <option value="intermediate">进阶</option>
-                <option value="master">大师</option>
-              </select>
-            </label>
-          ) : null}
-          {mode === 'openai-vs-human' ? (
-            <label>手动对手
-              <input value={manualName} maxLength={16} onChange={(event) => setManualName(event.target.value)} />
-            </label>
-          ) : null}
-          <button type="submit">开始</button>
-        </form>
-      ) : null}
     </div>
   );
 }

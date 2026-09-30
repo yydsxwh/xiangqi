@@ -44,7 +44,7 @@ export function XiangqiBoard({
   reducedMotion,
   onPick,
 }: Props) {
-  const metrics = metricsForWidth(width);
+  const metrics = metricsForWidth(Math.max(240, width - 24));
   const [arrived, setArrived] = useState(false);
   const lastKey = lastMove ? lastMove.join('') : '';
 
@@ -78,7 +78,7 @@ export function XiangqiBoard({
   return (
     <div
       className="board-frame"
-      style={{ width: metrics.width, height: metrics.height }}
+      style={{ width, height: metrics.height + 24, boxSizing: 'border-box' }}
     >
       <BoardLines metrics={metrics} />
       <FileLabels labels={topLabels} metrics={metrics} edge="top" />
@@ -180,21 +180,21 @@ function BoardLines({ metrics }: { metrics: BoardMetrics }) {
   }
   return (
     <svg className="board-svg" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
-      <g stroke="#5c4632" strokeWidth="1.4" fill="none">
+      <g stroke="var(--xq-grid, #5c4632)" strokeWidth="1.4" fill="none">
         {lines}
         <line x1={x(3)} y1={y(0)} x2={x(5)} y2={y(2)} />
         <line x1={x(5)} y1={y(0)} x2={x(3)} y2={y(2)} />
         <line x1={x(3)} y1={y(7)} x2={x(5)} y2={y(9)} />
         <line x1={x(5)} y1={y(7)} x2={x(3)} y2={y(9)} />
       </g>
-      <text x={width / 2 - cell * 1.15} y={y(4) + cell * 0.62} fill="#6a5338" fontSize={cell * 0.42}>
+      <text x={width / 2 - cell * 1.15} y={y(4) + cell * 0.62} fill="var(--xq-river, #5c4632)" fontSize={cell * 0.42}>
         楚河
       </text>
-      <text x={width / 2 + cell * 0.2} y={y(4) + cell * 0.62} fill="#6a5338" fontSize={cell * 0.42}>
+      <text x={width / 2 + cell * 0.2} y={y(4) + cell * 0.62} fill="var(--xq-river, #5c4632)" fontSize={cell * 0.42}>
         汉界
       </text>
       {STARS.map(([row, col]) => (
-        <circle key={`${row}${col}`} cx={x(col)} cy={y(row)} r="2.2" fill="#5c4632" />
+        <circle key={`${row}${col}`} cx={x(col)} cy={y(row)} r="2.2" fill="var(--xq-grid, #5c4632)" />
       ))}
     </svg>
   );
