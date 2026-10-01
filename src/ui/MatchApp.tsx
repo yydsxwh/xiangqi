@@ -57,6 +57,7 @@ export function MatchApp() {
   const [width, setWidth] = useState(760);
   const [theme, setTheme] = useState<ThemeId>('walnut');
   const [canChooseTheme, setCanChooseTheme] = useState(false);
+  const [canOpenAdmin, setCanOpenAdmin] = useState(false);
   const [confirmMoves, setConfirmMoves] = useState(true);
   const [allowUndo, setAllowUndo] = useState(true);
   const [showNotation, setShowNotation] = useState(true);
@@ -89,6 +90,7 @@ export function MatchApp() {
         if (config.defaultMode) setMode(config.defaultMode);
         if (config.defaultDifficulty) setDifficulty(config.defaultDifficulty);
         setCanChooseTheme(Boolean(config.canChooseTheme));
+        setCanOpenAdmin(Boolean(config.canOpenAdmin));
         setConfirmMoves(config.confirmMoves !== false);
         setAllowUndo(config.allowUndo !== false);
         setShowNotation(config.showNotation !== false);
@@ -267,6 +269,7 @@ export function MatchApp() {
       <header className="topbar">
         <a href="/games">游戏中心</a>
         <strong>中国象棋</strong>
+        {canOpenAdmin ? <a href="/games/xiangqi/admin">后台设置</a> : null}
         <span>{status}</span>
         {observe ? (
           <button type="button" onClick={() => setObserve(false)}>退出观察模式</button>
