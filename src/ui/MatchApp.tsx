@@ -67,6 +67,7 @@ export function MatchApp() {
   const [family, setFamily] = useState<'local' | 'online' | 'ai'>('ai');
   const [aiEngine, setAiEngine] = useState<'local' | 'cloud'>('local');
   const [cloudOptions, setCloudOptions] = useState<CloudOption[]>([]);
+  const [aiSource, setAiSource] = useState("");
   const [cloudId, setCloudId] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [mySeat, setMySeat] = useState<Side | ''>('');
@@ -109,6 +110,7 @@ export function MatchApp() {
         const options = Array.isArray(config.cloudOptions) ? config.cloudOptions as CloudOption[] : [];
         setCloudOptions(options);
         if (options[0]) setCloudId(`${options[0].providerId}:${options[0].modelId}`);
+        if (typeof config.aiSource === "string") setAiSource(config.aiSource);
         if (config.defaultMode === 'human-vs-human') setFamily('local');
         else if (config.defaultMode === 'online-vs-human') setFamily('online');
         else if (config.defaultMode === 'human-vs-cloud' || config.defaultMode === 'openai-vs-human') {
@@ -487,6 +489,7 @@ export function MatchApp() {
             <section className="ai-card">
               <strong>AI 对弈</strong>
               <p>{match.mode === 'human-vs-local' ? '本地 AI' : `${cloudChoice?.providerName || '云端 AI'} · ${cloudChoice?.modelName || ''}`}</p>
+              {match.mode !== 'human-vs-local' && aiSource ? <small>{aiSource === 'global' ? '跟随全局' : aiSource === 'env' ? '环境变量兜底' : '象棋独立配置'}</small> : null}
               {match.mode !== 'human-vs-local' && cloudChoice ? <small>{cloudChoice.modelId}</small> : null}
               <p>{humanSide === 'red' ? '你执红 / AI 执黑' : '你执黑 / AI 执红'}</p>
               {thinking ? <p>AI 思考中…</p> : null}
