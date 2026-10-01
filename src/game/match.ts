@@ -3,7 +3,7 @@ import type { EndKind, MoveRecord, Position } from '../domain/position.ts';
 import { fenOf } from '../domain/position.ts';
 import type { PlayerKind } from '../players/types.ts';
 
-export const MATCH_MODES = ['human-vs-human', 'human-vs-local', 'openai-vs-human'] as const;
+export const MATCH_MODES = ['human-vs-human', 'online-vs-human', 'human-vs-local', 'human-vs-cloud', 'openai-vs-human'] as const;
 export type MatchMode = (typeof MATCH_MODES)[number];
 
 export interface SeatBinding {

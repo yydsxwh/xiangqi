@@ -172,6 +172,8 @@ sudo rm -rf /var/www/xiangqi-web
 
 正式后台：https://www.yydsxwh.com/games/xiangqi/admin 。只允许站长进入，页面不带主站站长导航。对局页仅站长能看到「后台设置」。旧地址 `/studio/games/xiangqi` 会跳到新后台。站长管理顶部导航不再出现「中国象棋」。
 
+新对局方式只有本地双人、联网双人、人类 vs AI。联网房间的着法由服务器裁定，确认后才同步。人类 vs AI 时，棋盘旁边显示这一局实际的提供商和模型名。
+
 全站模型、密钥、备用模型、超时和重试在 https://www.yydsxwh.com/studio/settings 的「全局 AI 配置」。象棋选择「跟随主站全局 AI 配置」时不再填写密钥。独立配置才保存象棋自己的 Provider、地址、密钥、模型和推理参数。
 
 配置存在主站 `SiteSettings.xiangqiJson`。公开接口 `GET /api/games/xiangqi/config` 只返回开关、默认主题、功能开关、AI 是否可用和模型展示名。

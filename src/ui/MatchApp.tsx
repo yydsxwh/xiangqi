@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { THEME_IDS, THEME_LABEL, THEMES, isThemeId, themeStyle, type ThemeId } from './themes.ts';
 import { explainPlain } from '../domain/explain.ts';
 import {
@@ -28,6 +28,13 @@ interface Usage {
   lastMs: number;
 }
 
+interface CloudOption {
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  modelName: string;
+}
+
 const EMPTY_USAGE: Usage = {
   calls: 0,
   inputTokens: 0,
@@ -42,8 +49,7 @@ export function MatchApp() {
   const [mode, setMode] = useState<MatchMode>('human-vs-local');
   const [humanSide, setHumanSide] = useState<Side>('red');
   const [difficulty, setDifficulty] = useState<LocalDifficulty>('intermediate');
-  const [manualName, setManualName] = useState('豆包');
-  const [match, setMatch] = useState<MatchSnapshot>(() => createMatch('human-vs-local', 'red', 'intermediate', '豆包'));
+  const [match, setMatch] = useState<MatchSnapshot>(() => createMatch('human-vs-local', 'red', 'intermediate', undefined));
   const [selected, setSelected] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingPreview | null>(null);
   const [flipped, setFlipped] = useState(false);
@@ -58,6 +64,15 @@ export function MatchApp() {
   const [theme, setTheme] = useState<ThemeId>('walnut');
   const [canChooseTheme, setCanChooseTheme] = useState(false);
   const [canOpenAdmin, setCanOpenAdmin] = useState(false);
+  const [family, setFamily] = useState<'local' | 'online' | 'ai'>('ai');
+  const [aiEngine, setAiEngine] = useState<'local' | 'cloud'>('local');
+  const [cloudOptions, setCloudOptions] = useState<CloudOption[]>([]);
+  const [cloudId, setCloudId] = useState('');
+  const [roomCode, setRoomCode] = useState('');
+  const [mySeat, setMySeat] = useState<Side | ''>('');
+  const [joinInput, setJoinInput] = useState('');
+  const [peerOnline, setPeerOnline] = useState(false);
+  const socketRef = useRef<WebSocket | null>(null);
   const [confirmMoves, setConfirmMoves] = useState(true);
   const [allowUndo, setAllowUndo] = useState(true);
   const [showNotation, setShowNotation] = useState(true);
@@ -91,6 +106,16 @@ export function MatchApp() {
         if (config.defaultDifficulty) setDifficulty(config.defaultDifficulty);
         setCanChooseTheme(Boolean(config.canChooseTheme));
         setCanOpenAdmin(Boolean(config.canOpenAdmin));
+        const options = Array.isArray(config.cloudOptions) ? config.cloudOptions as CloudOption[] : [];
+        setCloudOptions(options);
+        if (options[0]) setCloudId(`${options[0].providerId}:${options[0].modelId}`);
+        if (config.defaultMode === 'human-vs-human') setFamily('local');
+        else if (config.defaultMode === 'online-vs-human') setFamily('online');
+        else if (config.defaultMode === 'human-vs-cloud' || config.defaultMode === 'openai-vs-human') {
+          setFamily('ai');
+          setAiEngine(options.length ? 'cloud' : 'local');
+          setMode(options.length ? 'human-vs-cloud' : 'human-vs-local');
+        } else setFamily('ai');
         setConfirmMoves(config.confirmMoves !== false);
         setAllowUndo(config.allowUndo !== false);
         setShowNotation(config.showNotation !== false);
@@ -102,16 +127,26 @@ export function MatchApp() {
   }, []);
 
   useEffect(() => {
+    const code = new URLSearchParams(location.search).get('room');
+    if (!code) return;
+    void joinOnlineRoom(code);
+    // 只在打开邀请链接时加入一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const cloudChoice = cloudOptions.find((item) => `${item.providerId}:${item.modelId}` === cloudId) ?? cloudOptions[0];
+
+  useEffect(() => {
     const seat = seatForTurn(match);
     if (setupOpen || thinking || pending) return;
     if (match.status === 'checkmate' || match.status === 'stalemate' || match.status === 'draw') return;
-    if (seat.kind === 'human') return;
+    if (seat.kind === 'human' || match.mode === 'online-vs-human') return;
     const request = moveRequestFor(match);
     let cancelled = false;
     setThinking(true);
-    setNotice(seat.kind === 'openai' ? 'OpenAI 思考中…' : '本地 AI 思考中…');
+    setNotice(seat.kind === 'openai' ? `${seat.name} 思考中…` : '本地 AI 思考中…');
     const started = Date.now();
-    void runEngine(match, seat.kind, difficulty)
+    void runEngine(match, seat.kind, difficulty, cloudChoice)
       .then((move) => {
         if (cancelled) return;
         if (!move || !acceptModelMove(move.ucci, request.legalMoves)) {
@@ -129,7 +164,7 @@ export function MatchApp() {
     return () => {
       cancelled = true;
     };
-  }, [match, setupOpen, difficulty, attempt, pending]);
+  }, [match, setupOpen, difficulty, attempt, pending, cloudChoice]);
 
   const destinations = selected && !pending ? destinationsFrom(match.position, ...squareParts(selected)) : [];
   const last = match.history.at(-1);
@@ -185,6 +220,7 @@ export function MatchApp() {
 
   function onPick(square: string) {
     if (pending || thinking || seatForTurn(match).kind !== 'human') return;
+    if (match.mode === 'online-vs-human' && mySeat && sideToMove(match) !== mySeat) return;
     if (selected && destinations.includes(square)) {
       if (!confirmMoves) {
         playHuman(`${selected}${square}`);
@@ -204,6 +240,12 @@ export function MatchApp() {
   function confirmPending() {
     if (!pending) return;
     const ucci = `${pending.from}${pending.to}`;
+    if (match.mode === 'online-vs-human') {
+      socketRef.current?.send(JSON.stringify({ type: 'move', ucci }));
+      setPending(null);
+      setNotice('正在同步到对方…');
+      return;
+    }
     setPending(null);
     playHuman(ucci);
   }
@@ -243,8 +285,72 @@ export function MatchApp() {
     setNotice('已悔棋');
   }
 
+  function connectRoom(code: string, seat: Side) {
+    socketRef.current?.close();
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(`${proto}//${location.host}/games/xiangqi/ws?code=${code}`);
+    socketRef.current = socket;
+    setRoomCode(code);
+    setMySeat(seat);
+    history.replaceState(null, '', `/games/xiangqi/?room=${code}`);
+    setMode('online-vs-human');
+    setFamily('online');
+    setSetupOpen(false);
+    setNotice('正在连接房间…');
+    socket.onmessage = (event) => {
+      const state = JSON.parse(String(event.data)) as {
+        type: string;
+        reason?: string;
+        moves?: string[];
+        you?: Side;
+        redOnline?: boolean;
+        blackOnline?: boolean;
+      };
+      if (state.type === 'error') {
+        setNotice(state.reason || '这步没有被接受');
+        return;
+      }
+      if (state.type !== 'state' || !state.moves || !state.you) return;
+      setMySeat(state.you);
+      setPeerOnline(state.you === 'red' ? Boolean(state.blackOnline) : Boolean(state.redOnline));
+      setMatch(matchFromMoves(state.moves, state.you));
+      setPending(null);
+      setSelected(null);
+      setNotice('');
+    };
+    socket.onclose = () => setNotice('连接中断，可以重新打开邀请链接。');
+  }
+
+  async function createOnlineRoom() {
+    const response = await fetch('/api/games/xiangqi/rooms', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ side: humanSide }),
+    });
+    const payload = await response.json() as { code?: string; side?: Side; reason?: string };
+    if (!response.ok || !payload.code || !payload.side) {
+      setNotice(payload.reason || '创建房间失败');
+      return;
+    }
+    connectRoom(payload.code, payload.side);
+  }
+
+  async function joinOnlineRoom(code: string) {
+    const clean = code.trim().toUpperCase();
+    const response = await fetch(`/api/games/xiangqi/rooms/${clean}/join`, { method: 'POST', credentials: 'same-origin' });
+    const payload = await response.json() as { side?: Side; reason?: string };
+    if (!response.ok || !payload.side) {
+      setNotice(payload.reason || '加入失败');
+      return;
+    }
+    connectRoom(clean, payload.side);
+  }
+
   function start() {
-    const next = createMatch(mode, humanSide, difficulty, manualName.trim() || '手动对手');
+    const nextMode: MatchMode = family === 'local' ? 'human-vs-human' : aiEngine === 'cloud' ? 'human-vs-cloud' : 'human-vs-local';
+    setMode(nextMode);
+    const next = createMatch(nextMode, humanSide, difficulty, cloudChoice);
     setMatch(next);
     setUsage(EMPTY_USAGE);
     setSelected(null);
@@ -318,21 +424,29 @@ export function MatchApp() {
             <form className="setup-form" onSubmit={(event) => { event.preventDefault(); start(); }}>
               <h2>新对局</h2>
               <label>方式
-                <select value={mode} onChange={(event) => setMode(event.target.value as MatchMode)}>
-                  <option value="human-vs-human">本地双人</option>
-                  <option value="human-vs-local">人类 vs 本地 AI</option>
-                  {aiAvailable || mode === 'openai-vs-human' ? <option value="openai-vs-human">OpenAI vs 手动对手</option> : null}
+                <select value={family} onChange={(event) => setFamily(event.target.value as 'local' | 'online' | 'ai')}>
+                  <option value="local">本地双人</option>
+                  <option value="online">联网双人</option>
+                  <option value="ai">人类 vs AI</option>
                 </select>
               </label>
-              {mode !== 'human-vs-human' ? (
+              {family !== 'local' ? (
                 <label>我执
                   <select value={humanSide} onChange={(event) => setHumanSide(event.target.value as Side)}>
-                    <option value="red">红方先走</option>
+                    <option value="red">红方</option>
                     <option value="black">黑方</option>
                   </select>
                 </label>
               ) : null}
-              {mode === 'human-vs-local' ? (
+              {family === 'ai' ? (
+                <label>对手
+                  <select value={aiEngine} onChange={(event) => setAiEngine(event.target.value as 'local' | 'cloud')}>
+                    <option value="local">本地 AI</option>
+                    {aiAvailable && cloudOptions.length ? <option value="cloud">云端 AI</option> : null}
+                  </select>
+                </label>
+              ) : null}
+              {family === 'ai' && aiEngine === 'local' ? (
                 <label>难度
                   <select value={difficulty} onChange={(event) => setDifficulty(event.target.value as LocalDifficulty)}>
                     <option value="beginner">入门</option>
@@ -341,10 +455,23 @@ export function MatchApp() {
                   </select>
                 </label>
               ) : null}
-              {mode === 'openai-vs-human' ? (
-                <label>手动对手
-                  <input value={manualName} maxLength={16} onChange={(event) => setManualName(event.target.value)} />
+              {family === 'ai' && aiEngine === 'cloud' ? (
+                <label>云端模型
+                  <select value={cloudId} onChange={(event) => setCloudId(event.target.value)}>
+                    {cloudOptions.map((item) => (
+                      <option key={`${item.providerId}:${item.modelId}`} value={`${item.providerId}:${item.modelId}`}>
+                        {item.providerName} · {item.modelName}
+                      </option>
+                    ))}
+                  </select>
                 </label>
+              ) : null}
+              {family === 'online' ? (
+                <div className="actions">
+                  <button type="button" onClick={() => void createOnlineRoom()}>创建房间</button>
+                  <input value={joinInput} maxLength={6} placeholder="房间码" onChange={(event) => setJoinInput(event.target.value.toUpperCase())} />
+                  <button type="button" onClick={() => void joinOnlineRoom(joinInput)}>加入</button>
+                </div>
               ) : null}
               {canChooseTheme ? (
                 <label>主题
@@ -353,15 +480,32 @@ export function MatchApp() {
                   </select>
                 </label>
               ) : null}
-              <button type="submit">开始</button>
+              {family === 'online' ? null : <button type="submit">开始</button>}
             </form>
           ) : null}
+          {!setupOpen && (match.mode === 'human-vs-local' || match.mode === 'human-vs-cloud' || match.mode === 'openai-vs-human') ? (
+            <section className="ai-card">
+              <strong>AI 对弈</strong>
+              <p>{match.mode === 'human-vs-local' ? '本地 AI' : `${cloudChoice?.providerName || '云端 AI'} · ${cloudChoice?.modelName || ''}`}</p>
+              {match.mode !== 'human-vs-local' && cloudChoice ? <small>{cloudChoice.modelId}</small> : null}
+              <p>{humanSide === 'red' ? '你执红 / AI 执黑' : '你执黑 / AI 执红'}</p>
+              {thinking ? <p>AI 思考中…</p> : null}
+            </section>
+          ) : null}
+          {!setupOpen && match.mode === 'online-vs-human' ? (
+            <section className="ai-card">
+              <strong>联网双人</strong>
+              <p>房间码 {roomCode}</p>
+              <p>{mySeat === 'red' ? '你执红' : '你执黑'} · {peerOnline ? '对方在线' : '等待对方'}</p>
+              <p>邀请链接已放在地址栏的 room 参数里，发给对方即可。</p>
+            </section>
+          ) : null}
           {!setupOpen ? <>
-          <p className="notice" role="status">{thinking ? (seatForTurn(match).kind === 'openai' ? 'OpenAI 思考中…' : '本地 AI 思考中…') : notice || '点击棋子，再点击绿色落点'}</p>
+          <p className="notice" role="status">{thinking ? (seatForTurn(match).kind === 'openai' ? `${seatForTurn(match).name} 思考中…` : '本地 AI 思考中…') : notice || '点击棋子，再点击绿色落点'}</p>
           <div className="actions">
-            {allowUndo ? <button type="button" onClick={undo} disabled={thinking || match.history.length === 0}>悔棋</button> : null}
+            {allowUndo && match.mode !== 'online-vs-human' ? <button type="button" onClick={undo} disabled={thinking || match.history.length === 0}>悔棋</button> : null}
             <button type="button" onClick={() => setFlipped((value) => !value)}>翻转</button>
-            <button type="button" onClick={() => { setMatch(createMatch(mode, humanSide, difficulty, manualName)); setUsage(EMPTY_USAGE); setSelected(null); setPending(null); setNotice('已重新开始'); }}>重新开始</button>
+            {match.mode === 'online-vs-human' ? null : <button type="button" onClick={() => { setMatch(createMatch(mode, humanSide, difficulty, cloudChoice)); setUsage(EMPTY_USAGE); setSelected(null); setPending(null); setNotice('已重新开始'); }}>重新开始</button>}
             <button type="button" onClick={() => setSetupOpen(true)}>新对局</button>
             {allowObserve ? (
               <button type="button" aria-pressed={observe} onClick={() => setObserve((value) => !value)}>
@@ -433,13 +577,37 @@ function Captured({ title, records }: { title: string; records: MoveRecord[] }) 
   return <p className="captured">{title}：{records.map((record) => record.capturedPiece).join(' ') || '无'}</p>;
 }
 
-function createMatch(mode: MatchMode, humanSide: Side, _difficulty: LocalDifficulty, manualName: string): MatchSnapshot {
-  const humanName = mode === 'openai-vs-human' ? manualName : '我';
-  const human = { playerId: 'human', kind: 'human' as const, name: humanName };
+function matchFromMoves(moves: string[], seat: Side): MatchSnapshot {
+  let position = createInitialPosition();
+  const history: MoveRecord[] = [];
+  let end: { status: MatchSnapshot['status']; subStatus: MatchSnapshot['subStatus'] } = { status: 'ongoing', subStatus: null };
+  for (const ucci of moves) {
+    const played = playUcci(position, ucci, { playerKind: 'human', ply: history.length + 1 });
+    if (!played.ok) break;
+    position = played.position;
+    history.push(played.record);
+    end = played.end;
+  }
+  return {
+    id: 'online',
+    mode: 'online-vs-human',
+    position,
+    history,
+    status: end.status,
+    subStatus: end.subStatus,
+    seats: {
+      red: { playerId: 'red', kind: 'human', name: seat === 'red' ? '我' : '对方' },
+      black: { playerId: 'black', kind: 'human', name: seat === 'black' ? '我' : '对方' },
+    },
+  };
+}
+
+function createMatch(mode: MatchMode, humanSide: Side, _difficulty: LocalDifficulty, cloud: CloudOption | undefined): MatchSnapshot {
+  const human = { playerId: 'human', kind: 'human' as const, name: '我' };
   const rival = mode === 'human-vs-local'
     ? { playerId: 'local', kind: 'local-ai' as const, name: '本地 AI' }
-    : mode === 'openai-vs-human'
-      ? { playerId: 'openai', kind: 'openai' as const, name: 'OpenAI' }
+    : mode === 'human-vs-cloud' || mode === 'openai-vs-human'
+      ? { playerId: 'openai', kind: 'openai' as const, name: cloud ? `${cloud.providerName} · ${cloud.modelName}` : '云端 AI' }
       : { playerId: 'other', kind: 'human' as const, name: '对方' };
   const red = mode === 'human-vs-human' || humanSide === 'red' ? (mode === 'human-vs-human' ? { ...human, playerId: 'red', name: '红方' } : human) : rival;
   const black = mode === 'human-vs-human'
@@ -456,7 +624,7 @@ function createMatch(mode: MatchMode, humanSide: Side, _difficulty: LocalDifficu
   };
 }
 
-async function runEngine(match: MatchSnapshot, kind: string, difficulty: LocalDifficulty): Promise<PlayerMove | null> {
+async function runEngine(match: MatchSnapshot, kind: string, difficulty: LocalDifficulty, cloud: CloudOption | undefined): Promise<PlayerMove | null> {
   const request = moveRequestFor(match);
   if (kind === 'local-ai') {
     const player = new LocalAIPlayer('local', {
@@ -473,7 +641,7 @@ async function runEngine(match: MatchSnapshot, kind: string, difficulty: LocalDi
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(input),
+        body: JSON.stringify({ ...input, providerId: cloud?.providerId, modelId: cloud?.modelId }),
       });
       const payload = await response.json().catch(() => ({})) as PlayerMove & { reason?: string; message?: string };
       if (!response.ok) throw new Error(payload.reason || payload.message || 'OpenAI 请求被拒绝');
