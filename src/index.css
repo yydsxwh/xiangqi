@@ -121,3 +121,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .drawer-toggle { display: inline-flex; }
   .side { position: sticky; bottom: 0; }
 }
+
+.ai-card {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--xq-line, #d7c4a3);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--xq-paper, #fffaf3) 88%, white);
+}
+.ai-card strong { display: block; }
+.ai-card p, .ai-card small { margin: 4px 0 0; }
