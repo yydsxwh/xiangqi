@@ -647,8 +647,8 @@ async function runEngine(match: MatchSnapshot, kind: string, difficulty: LocalDi
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...input, providerId: cloud?.providerId, modelId: cloud?.modelId }),
       });
-      const payload = await response.json().catch(() => ({})) as PlayerMove & { reason?: string; message?: string };
-      if (!response.ok) throw new Error(payload.reason || payload.message || `${label} 请求被拒绝`);
+      const payload = await response.json().catch(() => ({})) as PlayerMove & { reason?: string; message?: string; code?: string };
+      if (!response.ok) throw new Error(payload.reason || payload.message || (payload.code === 'NO_LEGAL_MOVE' ? `${label} 没有给出合法着法` : `${label} 请求被拒绝`));
       return payload;
     },
   });
