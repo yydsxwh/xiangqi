@@ -14,6 +14,9 @@ export interface PlayerMove {
   model?: string;
   requestId?: string;
   thinkingMs?: number;
+  depth?: number;
+  scoreCp?: number | null;
+  pv?: string[];
   usage?: {
     inputTokens: number;
     outputTokens: number;

@@ -7,4 +7,7 @@
  */
 
 export const CLOUD_AI_MOVE_ROUTE = '/api/games/xiangqi/ai-move';
+export const ENGINE_MOVE_ROUTE = '/api/games/xiangqi/engine-move';
+export const HYBRID_MOVE_ROUTE = '/api/games/xiangqi/hybrid-move';
+export const EXPLAIN_MOVE_ROUTE = '/api/games/xiangqi/explain-move';
 export const ACCESS_ROUTE = '/api/games/xiangqi/access';
