@@ -3,13 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { createInitialPosition, fenOf, legalUcciMoves } from '../src/domain/position.ts';
 import { createTurnLock, turnKey } from '../src/openai/lock.ts';
 import { acceptModelMove, parseOpenAIMoveBody } from '../src/openai/validate.ts';
-import { OPENAI_MOVE_ROUTE } from '../src/server/openai-move.ts';
+import { CLOUD_AI_MOVE_ROUTE, OPENAI_MOVE_ROUTE } from '../src/server/openai-move.ts';
 
 describe('OpenAI 请求校验', () => {
   const position = createInitialPosition();
   const legalMoves = legalUcciMoves(position);
 
   it('只请求主站同域路径', () => {
+    expect(CLOUD_AI_MOVE_ROUTE).toBe('/api/games/xiangqi/ai-move');
     expect(OPENAI_MOVE_ROUTE).toBe('/api/games/xiangqi/openai-move');
   });
 
@@ -43,9 +44,10 @@ describe('OpenAI 请求校验', () => {
   it('棋盘和棋手源码不包含密钥或直连地址', () => {
     const board = readFileSync(new URL('../src/ui/XiangqiBoard.tsx', import.meta.url), 'utf8');
     const app = readFileSync(new URL('../src/ui/MatchApp.tsx', import.meta.url), 'utf8');
-    const player = readFileSync(new URL('../src/players/openai-player.ts', import.meta.url), 'utf8');
+    const player = readFileSync(new URL('../src/players/cloud-ai-player.ts', import.meta.url), 'utf8');
     expect(board + app + player).not.toMatch(/sk-/);
     expect(board + app + player).not.toMatch(/OPENAI_API_KEY/);
+    expect(app).not.toMatch(/openai-move/);
     expect(player).not.toMatch(/api\.openai\.com/);
   });
 });

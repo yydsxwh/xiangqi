@@ -4,10 +4,13 @@
  */
 export interface GameCapabilities {
   canEnterBeta: boolean;
+  canUseCloudAi: boolean;
+  /** 旧字段，和 canUseCloudAi 保持同值。 */
   canUseOpenAI: boolean;
 }
 
 export const NO_ACCESS: GameCapabilities = {
   canEnterBeta: false,
+  canUseCloudAi: false,
   canUseOpenAI: false,
 };

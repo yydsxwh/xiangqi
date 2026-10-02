@@ -6,6 +6,7 @@ import { createPlayer } from '../src/players/create-player.ts';
 import { FutureAIPlayer } from '../src/players/future-ai-player.ts';
 import { HumanPlayer } from '../src/players/human-player.ts';
 import { LocalAIPlayer } from '../src/players/local-ai-player.ts';
+import { CloudAIPlayer } from '../src/players/cloud-ai-player.ts';
 import { OpenAIPlayer } from '../src/players/openai-player.ts';
 import { PikafishPlayer } from '../src/players/pikafish-player.ts';
 
@@ -52,9 +53,9 @@ describe('棋手抽象', () => {
     await expect(requestTurnMove(match('black'), players)).resolves.toEqual({ ucci: 'b7e7' });
   });
 
-  it('OpenAI 棋手把合法着法交给 transport', async () => {
+  it('云端棋手把合法着法交给 transport', async () => {
     const seen: string[] = [];
-    const player = new OpenAIPlayer('openai-red', {
+    const player = new CloudAIPlayer('cloud-red', {
       requestMove: async (input) => {
         seen.push(input.turnId);
         expect(input.legalMoves.length).toBeGreaterThan(0);
@@ -79,7 +80,7 @@ describe('棋手抽象', () => {
     await expect(player.requestMove(moveRequestFor(match()))).rejects.toThrow(/尚未实现/);
   });
 
-  it('工厂可以造出五种棋手', () => {
+  it('工厂可以造出云端棋手和旧入口', () => {
     expect(createPlayer({ kind: 'human', id: 'h' })).toBeInstanceOf(HumanPlayer);
     expect(createPlayer({
       kind: 'local-ai',
@@ -87,6 +88,11 @@ describe('棋手抽象', () => {
       difficulty: 'master',
       engine: { findMove: async () => null },
     })).toBeInstanceOf(LocalAIPlayer);
+    expect(createPlayer({
+      kind: 'cloud-ai',
+      id: 'c',
+      transport: { requestMove: async () => null },
+    })).toBeInstanceOf(CloudAIPlayer);
     expect(createPlayer({
       kind: 'openai',
       id: 'o',

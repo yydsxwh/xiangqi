@@ -14,8 +14,8 @@ import { seatForTurn, sideToMove, type MatchMode, type MatchSnapshot } from '../
 import { moveRequestFor } from '../game/turn.ts';
 import { LocalAIPlayer, type LocalDifficulty } from '../players/local-ai-player.ts';
 import { searchLocalMove } from '../players/local-search.ts';
-import { OpenAIPlayer } from '../players/openai-player.ts';
-import { OPENAI_MOVE_ROUTE } from '../server/openai-move.ts';
+import { CloudAIPlayer } from '../players/cloud-ai-player.ts';
+import { CLOUD_AI_MOVE_ROUTE } from '../server/cloud-ai-route.ts';
 import { acceptModelMove } from '../openai/validate.ts';
 import { XiangqiBoard, type PendingPreview } from './XiangqiBoard.tsx';
 
@@ -146,7 +146,7 @@ export function MatchApp() {
     const request = moveRequestFor(match);
     let cancelled = false;
     setThinking(true);
-    setNotice(seat.kind === 'openai' ? `${seat.name} 思考中…` : '本地 AI 思考中…');
+    setNotice(isCloudKind(seat.kind) ? `${seat.name} 思考中…` : '本地 AI 思考中…');
     const started = Date.now();
     void runEngine(match, seat.kind, difficulty, cloudChoice)
       .then((move) => {
@@ -504,7 +504,7 @@ export function MatchApp() {
             </section>
           ) : null}
           {!setupOpen ? <>
-          <p className="notice" role="status">{thinking ? (seatForTurn(match).kind === 'openai' ? `${seatForTurn(match).name} 思考中…` : '本地 AI 思考中…') : notice || '点击棋子，再点击绿色落点'}</p>
+          <p className="notice" role="status">{thinking ? (isCloudKind(seatForTurn(match).kind) ? `${seatForTurn(match).name} 思考中…` : '本地 AI 思考中…') : notice || '点击棋子，再点击绿色落点'}</p>
           <div className="actions">
             {allowUndo && match.mode !== 'online-vs-human' ? <button type="button" onClick={undo} disabled={thinking || match.history.length === 0}>悔棋</button> : null}
             <button type="button" onClick={() => setFlipped((value) => !value)}>翻转</button>
@@ -610,7 +610,7 @@ function createMatch(mode: MatchMode, humanSide: Side, _difficulty: LocalDifficu
   const rival = mode === 'human-vs-local'
     ? { playerId: 'local', kind: 'local-ai' as const, name: '本地 AI' }
     : mode === 'human-vs-cloud' || mode === 'openai-vs-human'
-      ? { playerId: 'openai', kind: 'openai' as const, name: cloud ? `${cloud.providerName} · ${cloud.modelName}` : '云端 AI' }
+      ? { playerId: 'cloud-ai', kind: 'cloud-ai' as const, name: cloud ? `${cloud.providerName} · ${cloud.modelName}` : '云端 AI' }
       : { playerId: 'other', kind: 'human' as const, name: '对方' };
   const red = mode === 'human-vs-human' || humanSide === 'red' ? (mode === 'human-vs-human' ? { ...human, playerId: 'red', name: '红方' } : human) : rival;
   const black = mode === 'human-vs-human'
@@ -638,20 +638,25 @@ async function runEngine(match: MatchSnapshot, kind: string, difficulty: LocalDi
     }, difficulty);
     return player.requestMove(request);
   }
-  const player = new OpenAIPlayer('openai', {
+  const label = cloud ? `${cloud.providerName} · ${cloud.modelName}` : '云端 AI';
+  const player = new CloudAIPlayer('cloud-ai', {
     requestMove: async (input) => {
-      const response = await fetch(OPENAI_MOVE_ROUTE, {
+      const response = await fetch(CLOUD_AI_MOVE_ROUTE, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...input, providerId: cloud?.providerId, modelId: cloud?.modelId }),
       });
       const payload = await response.json().catch(() => ({})) as PlayerMove & { reason?: string; message?: string };
-      if (!response.ok) throw new Error(payload.reason || payload.message || 'OpenAI 请求被拒绝');
+      if (!response.ok) throw new Error(payload.reason || payload.message || `${label} 请求被拒绝`);
       return payload;
     },
   });
   return player.requestMove(request);
+}
+
+function isCloudKind(kind: string): boolean {
+  return kind === 'cloud-ai' || kind === 'openai';
 }
 
 function squareParts(square: string): [number, number] {
