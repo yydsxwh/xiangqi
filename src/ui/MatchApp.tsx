@@ -15,7 +15,7 @@ import { moveRequestFor } from '../game/turn.ts';
 import { LocalAIPlayer, type LocalDifficulty } from '../players/local-ai-player.ts';
 import { searchLocalMove } from '../players/local-search.ts';
 import { CloudAIPlayer } from '../players/cloud-ai-player.ts';
-import { CLOUD_AI_MOVE_ROUTE } from '../server/cloud-ai-route.ts';
+import { CLOUD_AI_MOVE_ROUTE, ENGINE_MOVE_ROUTE, EXPLAIN_MOVE_ROUTE, HYBRID_MOVE_ROUTE } from '../server/cloud-ai-route.ts';
 import { acceptModelMove } from '../openai/validate.ts';
 import { XiangqiBoard, type PendingPreview } from './XiangqiBoard.tsx';
 
@@ -35,6 +35,29 @@ interface CloudOption {
   modelName: string;
 }
 
+type AiKind = 'engine' | 'llm' | 'hybrid';
+type EngineSpeedId = 'fast' | 'standard' | 'deep';
+
+interface EngineSpeedOption {
+  id: EngineSpeedId;
+  label: string;
+  movetimeMs: number;
+}
+
+interface EnginePublic {
+  available: boolean;
+  providerId: string;
+  providerName: string;
+  blurb: string;
+  speeds: EngineSpeedOption[];
+  hybridAvailable: boolean;
+  hybridTopK: number;
+  hybridPolicy: 'engine-first' | 'collaborate' | 'llm-first';
+  hybridSearchMs: number;
+  explainMoves: boolean;
+  note: string;
+}
+
 const EMPTY_USAGE: Usage = {
   calls: 0,
   inputTokens: 0,
@@ -49,7 +72,7 @@ export function MatchApp() {
   const [mode, setMode] = useState<MatchMode>('human-vs-local');
   const [humanSide, setHumanSide] = useState<Side>('red');
   const [difficulty, setDifficulty] = useState<LocalDifficulty>('intermediate');
-  const [match, setMatch] = useState<MatchSnapshot>(() => createMatch('human-vs-local', 'red', 'intermediate', undefined));
+  const [match, setMatch] = useState<MatchSnapshot>(() => createMatch('human-vs-engine', 'red', 'intermediate', undefined, null));
   const [selected, setSelected] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingPreview | null>(null);
   const [flipped, setFlipped] = useState(false);
@@ -65,7 +88,11 @@ export function MatchApp() {
   const [canChooseTheme, setCanChooseTheme] = useState(false);
   const [canOpenAdmin, setCanOpenAdmin] = useState(false);
   const [family, setFamily] = useState<'local' | 'online' | 'ai'>('ai');
-  const [aiEngine, setAiEngine] = useState<'local' | 'cloud'>('local');
+  const [aiKind, setAiKind] = useState<AiKind>('engine');
+  const [engineSpeed, setEngineSpeed] = useState<EngineSpeedId>('standard');
+  const [engineInfo, setEngineInfo] = useState<EnginePublic | null>(null);
+  const [engineDepth, setEngineDepth] = useState(0);
+  const [explanation, setExplanation] = useState('');
   const [cloudOptions, setCloudOptions] = useState<CloudOption[]>([]);
   const [aiSource, setAiSource] = useState("");
   const [cloudId, setCloudId] = useState('');
@@ -111,12 +138,19 @@ export function MatchApp() {
         setCloudOptions(options);
         if (options[0]) setCloudId(`${options[0].providerId}:${options[0].modelId}`);
         if (typeof config.aiSource === "string") setAiSource(config.aiSource);
+        if (config.engine) setEngineInfo(config.engine as EnginePublic);
         if (config.defaultMode === 'human-vs-human') setFamily('local');
         else if (config.defaultMode === 'online-vs-human') setFamily('online');
         else if (config.defaultMode === 'human-vs-cloud' || config.defaultMode === 'openai-vs-human') {
           setFamily('ai');
-          setAiEngine(options.length ? 'cloud' : 'local');
-          setMode(options.length ? 'human-vs-cloud' : 'human-vs-local');
+          setAiKind(options.length ? 'llm' : 'engine');
+          setMode(options.length ? 'human-vs-cloud' : 'human-vs-engine');
+        } else if (config.defaultMode === 'human-vs-hybrid') {
+          setFamily('ai');
+          setAiKind('hybrid');
+        } else if (config.defaultMode === 'human-vs-engine') {
+          setFamily('ai');
+          setAiKind('engine');
         } else setFamily('ai');
         setConfirmMoves(config.confirmMoves !== false);
         setAllowUndo(config.allowUndo !== false);
@@ -146,16 +180,26 @@ export function MatchApp() {
     const request = moveRequestFor(match);
     let cancelled = false;
     setThinking(true);
-    setNotice(isCloudKind(seat.kind) ? `${seat.name} 思考中…` : '本地 AI 思考中…');
+    setNotice(thinkingLabel(seat.kind, seat.name, engineInfo));
     const started = Date.now();
-    void runEngine(match, seat.kind, difficulty, cloudChoice)
+    void runEngine(match, seat.kind, difficulty, cloudChoice, {
+      speed: engineSpeed,
+      newGame: match.history.length === 0,
+      explain: Boolean(engineInfo?.explainMoves),
+    })
       .then((move) => {
         if (cancelled) return;
         if (!move || !acceptModelMove(move.ucci, request.legalMoves)) {
           setNotice(move ? '这步不在合法着法里，没有落子。' : '这一手没有得到着法。');
           return;
         }
+        if (move.depth) setEngineDepth(move.depth);
         applyMove(move, seat.kind, started);
+        if (engineInfo?.explainMoves && (seat.kind === 'pikafish' || seat.kind === 'hybrid')) {
+          void requestExplanation(match, move).then((text) => {
+            if (!cancelled && text) setExplanation(text);
+          });
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) setNotice(error instanceof Error ? error.message : 'AI 出错了，棋盘仍然可用。');
@@ -166,7 +210,7 @@ export function MatchApp() {
     return () => {
       cancelled = true;
     };
-  }, [match, setupOpen, difficulty, attempt, pending, cloudChoice]);
+  }, [match, setupOpen, difficulty, attempt, pending, cloudChoice, engineSpeed, engineInfo]);
 
   const destinations = selected && !pending ? destinationsFrom(match.position, ...squareParts(selected)) : [];
   const last = match.history.at(-1);
@@ -350,9 +394,19 @@ export function MatchApp() {
   }
 
   function start() {
-    const nextMode: MatchMode = family === 'local' ? 'human-vs-human' : aiEngine === 'cloud' ? 'human-vs-cloud' : 'human-vs-local';
+    const nextMode: MatchMode = family === 'local'
+      ? 'human-vs-human'
+      : family === 'online'
+        ? 'online-vs-human'
+        : aiKind === 'llm'
+          ? 'human-vs-cloud'
+          : aiKind === 'hybrid'
+            ? 'human-vs-hybrid'
+            : 'human-vs-engine';
     setMode(nextMode);
-    const next = createMatch(nextMode, humanSide, difficulty, cloudChoice);
+    setExplanation('');
+    setEngineDepth(0);
+    const next = createMatch(nextMode, humanSide, difficulty, cloudChoice, engineInfo);
     setMatch(next);
     setUsage(EMPTY_USAGE);
     setSelected(null);
@@ -442,23 +496,24 @@ export function MatchApp() {
               ) : null}
               {family === 'ai' ? (
                 <label>对手
-                  <select value={aiEngine} onChange={(event) => setAiEngine(event.target.value as 'local' | 'cloud')}>
-                    <option value="local">本地 AI</option>
-                    {aiAvailable && cloudOptions.length ? <option value="cloud">云端 AI</option> : null}
+                  <select value={aiKind} onChange={(event) => setAiKind(event.target.value as AiKind)}>
+                    <option value="engine">电脑 AI（专业象棋引擎）</option>
+                    <option value="llm" disabled={!aiAvailable || !cloudOptions.length}>大模型 AI</option>
+                    <option value="hybrid" disabled={!engineInfo?.hybridAvailable}>混合 AI</option>
                   </select>
                 </label>
               ) : null}
-              {family === 'ai' && aiEngine === 'local' ? (
-                <label>难度
-                  <select value={difficulty} onChange={(event) => setDifficulty(event.target.value as LocalDifficulty)}>
-                    <option value="beginner">入门</option>
-                    <option value="intermediate">进阶</option>
-                    <option value="master">大师</option>
+              {family === 'ai' && aiKind === 'engine' ? (
+                <label>速度
+                  <select value={engineSpeed} onChange={(event) => setEngineSpeed(event.target.value as EngineSpeedId)}>
+                    {(engineInfo?.speeds?.length ? engineInfo.speeds : [{ id: 'fast' as const, label: '快速', movetimeMs: 300 }, { id: 'standard' as const, label: '标准', movetimeMs: 800 }, { id: 'deep' as const, label: '深度', movetimeMs: 3000 }]).map((item) => (
+                      <option key={item.id} value={item.id}>{item.label} · {formatMovetime(item.movetimeMs)}</option>
+                    ))}
                   </select>
                 </label>
               ) : null}
-              {family === 'ai' && aiEngine === 'cloud' ? (
-                <label>云端模型
+              {family === 'ai' && (aiKind === 'llm' || aiKind === 'hybrid') ? (
+                <label>大模型
                   <select value={cloudId} onChange={(event) => setCloudId(event.target.value)}>
                     {cloudOptions.map((item) => (
                       <option key={`${item.providerId}:${item.modelId}`} value={`${item.providerId}:${item.modelId}`}>
@@ -485,14 +540,16 @@ export function MatchApp() {
               {family === 'online' ? null : <button type="submit">开始</button>}
             </form>
           ) : null}
-          {!setupOpen && (match.mode === 'human-vs-local' || match.mode === 'human-vs-cloud' || match.mode === 'openai-vs-human') ? (
+          {!setupOpen && (match.mode === 'human-vs-local' || match.mode === 'human-vs-cloud' || match.mode === 'human-vs-engine' || match.mode === 'human-vs-hybrid' || match.mode === 'openai-vs-human') ? (
             <section className="ai-card">
-              <strong>AI 对弈</strong>
-              <p>{match.mode === 'human-vs-local' ? '本地 AI' : `${cloudChoice?.providerName || '云端 AI'} · ${cloudChoice?.modelName || ''}`}</p>
-              {match.mode !== 'human-vs-local' && aiSource ? <small>{aiSource === 'global' ? '跟随全局' : aiSource === 'env' ? '环境变量兜底' : '象棋独立配置'}</small> : null}
-              {match.mode !== 'human-vs-local' && cloudChoice ? <small>{cloudChoice.modelId}</small> : null}
+              <strong>{match.mode === 'human-vs-hybrid' ? '混合 AI' : 'AI 对弈'}</strong>
+              <p>{aiCardTitle(match.mode, engineInfo, cloudChoice)}</p>
+              <p>{aiCardDetail(match.mode, engineInfo, engineSpeed, cloudChoice)}</p>
+              {match.mode === 'human-vs-cloud' && aiSource ? <small>{aiSource === 'global' ? '跟随全局' : aiSource === 'env' ? '环境变量兜底' : '象棋独立配置'}</small> : null}
               <p>{humanSide === 'red' ? '你执红 / AI 执黑' : '你执黑 / AI 执红'}</p>
-              {thinking ? <p>AI 思考中…</p> : null}
+              {thinking ? <p>{thinkingLabel(seatForTurn(match).kind, seatForTurn(match).name, engineInfo)}</p> : null}
+              {!thinking && engineDepth > 0 && (match.mode === 'human-vs-engine' || match.mode === 'human-vs-hybrid') ? <p>深度 {engineDepth}</p> : null}
+              {explanation ? <p>{explanation}</p> : null}
             </section>
           ) : null}
           {!setupOpen && match.mode === 'online-vs-human' ? (
@@ -504,11 +561,11 @@ export function MatchApp() {
             </section>
           ) : null}
           {!setupOpen ? <>
-          <p className="notice" role="status">{thinking ? (isCloudKind(seatForTurn(match).kind) ? `${seatForTurn(match).name} 思考中…` : '本地 AI 思考中…') : notice || '点击棋子，再点击绿色落点'}</p>
+          <p className="notice" role="status">{thinking ? thinkingLabel(seatForTurn(match).kind, seatForTurn(match).name, engineInfo) : notice || '点击棋子，再点击绿色落点'}</p>
           <div className="actions">
             {allowUndo && match.mode !== 'online-vs-human' ? <button type="button" onClick={undo} disabled={thinking || match.history.length === 0}>悔棋</button> : null}
             <button type="button" onClick={() => setFlipped((value) => !value)}>翻转</button>
-            {match.mode === 'online-vs-human' ? null : <button type="button" onClick={() => { setMatch(createMatch(mode, humanSide, difficulty, cloudChoice)); setUsage(EMPTY_USAGE); setSelected(null); setPending(null); setNotice('已重新开始'); }}>重新开始</button>}
+            {match.mode === 'online-vs-human' ? null : <button type="button" onClick={() => { setExplanation(''); setEngineDepth(0); setMatch(createMatch(mode, humanSide, difficulty, cloudChoice, engineInfo)); setUsage(EMPTY_USAGE); setSelected(null); setPending(null); setNotice('已重新开始'); }}>重新开始</button>}
             <button type="button" onClick={() => setSetupOpen(true)}>新对局</button>
             {allowObserve ? (
               <button type="button" aria-pressed={observe} onClick={() => setObserve((value) => !value)}>
@@ -605,13 +662,19 @@ function matchFromMoves(moves: string[], seat: Side): MatchSnapshot {
   };
 }
 
-function createMatch(mode: MatchMode, humanSide: Side, _difficulty: LocalDifficulty, cloud: CloudOption | undefined): MatchSnapshot {
+function createMatch(mode: MatchMode, humanSide: Side, _difficulty: LocalDifficulty, cloud: CloudOption | undefined, engine: EnginePublic | null): MatchSnapshot {
   const human = { playerId: 'human', kind: 'human' as const, name: '我' };
-  const rival = mode === 'human-vs-local'
-    ? { playerId: 'local', kind: 'local-ai' as const, name: '本地 AI' }
-    : mode === 'human-vs-cloud' || mode === 'openai-vs-human'
-      ? { playerId: 'cloud-ai', kind: 'cloud-ai' as const, name: cloud ? `${cloud.providerName} · ${cloud.modelName}` : '云端 AI' }
-      : { playerId: 'other', kind: 'human' as const, name: '对方' };
+  const engineName = engine ? `${engine.providerName} · ${engine.blurb}` : '专业象棋引擎';
+  const cloudName = cloud ? `${cloud.providerName} · ${cloud.modelName}` : '大模型 AI';
+  const rival = mode === 'human-vs-engine'
+    ? { playerId: 'pikafish', kind: 'pikafish' as const, name: engineName }
+    : mode === 'human-vs-hybrid'
+      ? { playerId: 'hybrid', kind: 'hybrid' as const, name: engine && cloud ? `${engine.providerName} + ${cloud.modelName}` : '混合 AI' }
+      : mode === 'human-vs-local'
+        ? { playerId: 'local', kind: 'local-ai' as const, name: '本地 AI' }
+        : mode === 'human-vs-cloud' || mode === 'openai-vs-human'
+          ? { playerId: 'cloud-ai', kind: 'cloud-ai' as const, name: cloudName }
+          : { playerId: 'other', kind: 'human' as const, name: '对方' };
   const red = mode === 'human-vs-human' || humanSide === 'red' ? (mode === 'human-vs-human' ? { ...human, playerId: 'red', name: '红方' } : human) : rival;
   const black = mode === 'human-vs-human'
     ? { playerId: 'black', kind: 'human' as const, name: '黑方' }
@@ -627,8 +690,41 @@ function createMatch(mode: MatchMode, humanSide: Side, _difficulty: LocalDifficu
   };
 }
 
-async function runEngine(match: MatchSnapshot, kind: string, difficulty: LocalDifficulty, cloud: CloudOption | undefined): Promise<PlayerMove | null> {
+async function runEngine(
+  match: MatchSnapshot,
+  kind: string,
+  difficulty: LocalDifficulty,
+  cloud: CloudOption | undefined,
+  engine: { speed: EngineSpeedId; newGame: boolean; explain: boolean },
+): Promise<PlayerMove | null> {
   const request = moveRequestFor(match);
+  if (kind === 'pikafish' || kind === 'hybrid') {
+    const route = kind === 'hybrid' ? HYBRID_MOVE_ROUTE : ENGINE_MOVE_ROUTE;
+    const response = await fetch(route, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...request,
+        speed: engine.speed,
+        newGame: engine.newGame,
+        providerId: cloud?.providerId,
+        modelId: cloud?.modelId,
+      }),
+    });
+    const payload = await response.json().catch(() => ({})) as PlayerMove & { reason?: string; fallback?: string };
+    if (payload.fallback === 'local') {
+      const local = new LocalAIPlayer('local', {
+        findMove: async (input) => {
+          const ucci = await searchLocalMove(input.fen, input.sideToMove, input.difficulty);
+          return ucci ? { ucci } : null;
+        },
+      }, difficulty);
+      return local.requestMove(request);
+    }
+    if (!response.ok) throw new Error(payload.reason || '引擎没有给出着法');
+    return payload;
+  }
   if (kind === 'local-ai') {
     const player = new LocalAIPlayer('local', {
       findMove: async (input) => {
@@ -657,6 +753,56 @@ async function runEngine(match: MatchSnapshot, kind: string, difficulty: LocalDi
 
 function isCloudKind(kind: string): boolean {
   return kind === 'cloud-ai' || kind === 'openai';
+}
+
+function formatMovetime(ms: number): string {
+  const seconds = Math.max(0, ms) / 1000;
+  const text = seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(1).replace(/\.0$/, '');
+  return `约 ${text} 秒`;
+}
+
+function policyLabel(policy: EnginePublic['hybridPolicy']): string {
+  if (policy === 'engine-first') return '引擎优先';
+  if (policy === 'llm-first') return '大模型优先';
+  return '协同决策';
+}
+
+function thinkingLabel(kind: string, name: string, engine: EnginePublic | null): string {
+  if (kind === 'pikafish') return `${engine?.providerName || name} 思考中…`;
+  if (kind === 'hybrid') return '混合 AI 思考中…';
+  if (kind === 'local-ai') return '本地 AI 思考中…';
+  return `${name} 思考中…`;
+}
+
+function aiCardTitle(mode: MatchMode, engine: EnginePublic | null, cloud: CloudOption | undefined): string {
+  if (mode === 'human-vs-engine') return engine ? `${engine.providerName} · ${engine.blurb}` : '专业象棋引擎';
+  if (mode === 'human-vs-hybrid') return engine && cloud ? `${engine.providerName} + ${cloud.modelName}` : '混合 AI';
+  if (mode === 'human-vs-local') return '本地 AI';
+  return cloud ? `${cloud.providerName} · ${cloud.modelName}` : '大模型 AI';
+}
+
+function aiCardDetail(mode: MatchMode, engine: EnginePublic | null, speed: EngineSpeedId, cloud: CloudOption | undefined): string {
+  if (mode === 'human-vs-engine') {
+    const chosen = engine?.speeds.find((item) => item.id === speed);
+    return chosen ? `${chosen.label} · ${formatMovetime(chosen.movetimeMs)}` : '';
+  }
+  if (mode === 'human-vs-hybrid') {
+    return `引擎候选：Top ${engine?.hybridTopK ?? 5} · 模式：${policyLabel(engine?.hybridPolicy || 'collaborate')}。${engine?.note || '混合 AI：更强解释/策略，速度慢于专业引擎'}`;
+  }
+  if (mode === 'human-vs-cloud' || mode === 'openai-vs-human') return cloud?.modelId || '';
+  return '';
+}
+
+async function requestExplanation(match: MatchSnapshot, move: PlayerMove): Promise<string> {
+  const request = moveRequestFor(match);
+  const response = await fetch(EXPLAIN_MOVE_ROUTE, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...request, ucci: move.ucci, pv: move.pv ?? [], scoreCp: move.scoreCp ?? null }),
+  });
+  const payload = await response.json().catch(() => ({})) as { text?: string };
+  return payload.text || '';
 }
 
 function squareParts(square: string): [number, number] {

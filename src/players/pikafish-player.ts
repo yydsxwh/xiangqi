@@ -7,7 +7,7 @@ import type { Player } from './types.ts';
  * GPL-3.0 引擎不放进本仓库，也不由这个类加载 WASM。
  */
 export interface UciTransport {
-  bestMove(input: { fen: string; depth: number }): Promise<string | null>;
+  bestMove(input: { fen: string; depth: number; legalMoves?: readonly string[] }): Promise<string | null>;
 }
 
 export class PikafishPlayer implements Player {
@@ -21,7 +21,7 @@ export class PikafishPlayer implements Player {
   ) {}
 
   async requestMove(request: MoveRequest): Promise<PlayerMove | null> {
-    const ucci = await this.transport.bestMove({ fen: request.fen, depth: this.depth });
+    const ucci = await this.transport.bestMove({ fen: request.fen, depth: this.depth, legalMoves: request.legalMoves });
     if (!ucci) return null;
     return { ucci };
   }
